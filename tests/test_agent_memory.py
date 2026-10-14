@@ -285,6 +285,69 @@ class RegressionTests(unittest.TestCase):
         self.assertNotIn("Traceback", proc.stderr)
 
 
+class FieldReport031Tests(unittest.TestCase):
+    """v0.3.1 regressions — the three bugs from the 0.3.0 field check."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Path(self.tmp.name) / "s"
+        am.init_store(self.store)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_brief_matches_inflected_word_forms(self):
+        # Field bug 1: context said 'deploying', the lesson said 'deploy',
+        # exact-word matching dropped the warning entirely.
+        am.learn_lesson(self.store, situation="deploy the release",
+                        rule="verify the live site after")
+        out = am.brief(self.store, context="deploying the release to production")
+        self.assertGreaterEqual(out["warnings"], 1)
+        self.assertIn("verify the live site after", out["brief"])
+        self.assertFalse(out["warnings_fallback"])
+
+    def test_brief_warnings_never_drop_to_zero(self):
+        am.learn_lesson(self.store, situation="sending invoices",
+                        rule="review drafts before sending")
+        out = am.brief(self.store, context="completely unrelated zebras")
+        self.assertEqual(out["warnings"], 1)
+        self.assertTrue(out["warnings_fallback"])
+        self.assertIn("most recent lessons", out["brief"])
+
+    def test_search_ignores_template_prose_in_root_files(self):
+        # Field bug 2: 'outrank' and 'durable' appear only in the shipped
+        # template prose of LESSONS.md / MEMORY.md — they are not memories.
+        self.assertEqual(am.search(self.store, "outrank"), [])
+        self.assertEqual(am.search(self.store, "durable"), [])
+        am.save_fact(self.store, "durable goods ship on Fridays")
+        hits = am.search(self.store, "durable")
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["kind"], "fact")
+
+    def test_template_prose_cannot_take_the_lesson_boost(self):
+        am.save_fact(self.store, "facts and search ranking matter here")
+        hits = am.search(self.store, "facts search ranking")
+        self.assertTrue(all(h["file"] != "LESSONS.md" for h in hits))
+
+    def test_topic_prose_remains_searchable(self):
+        topic = self.store / "topics" / "notes.md"
+        topic.write_text("# Notes\n\nA zephyr protocol paragraph.\n",
+                         encoding="utf-8")
+        hits = am.search(self.store, "zephyr")
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["kind"], "topic")
+
+    def test_intention_matches_trigger_not_action(self):
+        # Field bug 3: 'smoke suite' (words from the ACTION half) fired
+        # an intention whose trigger was deploying.
+        am.add_intention(self.store, "deploying to production",
+                         "run the smoke test suite")
+        out = am.brief(self.store, context="run the smoke suite now")
+        self.assertEqual(out["intentions_triggered"], 0)
+        out2 = am.brief(self.store, context="deploying to production tonight")
+        self.assertEqual(out2["intentions_triggered"], 1)
+
+
 class ServerKillerRegressionTests(unittest.TestCase):
     """v0.2.2 regressions: the two remaining ways to kill the server."""
 

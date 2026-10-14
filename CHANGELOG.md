@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.1 — 2026-10-14
+
+Three bugs from the 0.3.0 field check — all in the new Behavior Memory
+matching, all reproduced before fixing:
+
+- **Brief dropped every warning on inflection mismatch.** Context
+  matching was exact-word: "deploying" in the context never met "deploy"
+  in the lesson, and a brief with a context returned `warnings=0` while
+  the same store without a context returned the lesson. Matching now
+  uses stemmed tokens on both sides — and, as a safety invariant,
+  warnings can no longer drop to zero: when no lesson matches the
+  context, the brief shows the most recent lessons and says so
+  (`warnings_fallback` in the result).
+- **Template prose could outscore real memories — with the ×3 lesson
+  boost.** Search indexed every line of LESSONS.md, including the
+  shipped template text (which naturally contains words like "facts",
+  "search", "outrank"). In the root files (MEMORY.md, LESSONS.md,
+  INTENTIONS.md) only bullet lines are memory entries, so only they are
+  indexed now — the same entries-are-bullets doctrine `memory_forget`
+  adopted in 0.3.0. Topic files keep full prose search.
+- **Intentions fired on their action half.** Trigger matching ran over
+  the whole `WHEN … → DO …` line, so a context mentioning "smoke suite"
+  summoned a deploy intention. Intentions now match on the extracted
+  WHEN trigger only.
+- Test suite: 42 → 48, one regression class for the field report.
+
 ## 0.3.0 — 2026-10-14
 
 **Behavior Memory** — a memory type the rest of the field doesn't have.

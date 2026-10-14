@@ -148,7 +148,7 @@ refused, and topic names are slugified before they touch the filesystem.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests   # 42 tests, incl. live MCP round-trips, regressions for issues #1–#3, both post-0.2.1 server-killers, and the Behavior Memory suite
+python3 -m unittest discover -s tests   # 48 tests, incl. live MCP round-trips, regressions for issues #1–#3, both post-0.2.1 server-killers, and both Behavior Memory field reports
 ```
 
 ## What v1 deliberately is not
@@ -160,5 +160,5 @@ See [SCOPE.md](SCOPE.md) for the full reasoning.
 
 ## Status
 
-v0.3.0 — public repo: https://github.com/Nom-nom-hub/agent-memory — see [CHANGELOG.md](CHANGELOG.md)
+v0.3.1 — public repo: https://github.com/Nom-nom-hub/agent-memory — see [CHANGELOG.md](CHANGELOG.md)
 Not yet on PyPI; install from GitHub (above) for now.

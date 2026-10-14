@@ -38,7 +38,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 # Legitimate MCP messages nest maybe a dozen levels. Anything past this
 # is hostile or broken, and deep nesting is exactly what makes the JSON
@@ -177,7 +177,14 @@ def search(store: Path, query: str, limit: int = 8) -> list:
             kind = "topic"
         else:
             kind = "fact"
+        is_root_file = path.name in ("MEMORY.md", "LESSONS.md", "INTENTIONS.md")
         for i, line in enumerate(lines, start=1):
+            if is_root_file and not line.strip().startswith("- "):
+                # In the root files only bullet lines are memory entries.
+                # Template prose and headings are scaffolding: indexing
+                # them lets shipped boilerplate outscore real memories
+                # (and take the lesson boost) on its own vocabulary.
+                continue
             low = line.lower()
             words = re.findall(r"[a-z0-9']+", low)
             hits = sum(words.count(t) for t in tokens)
@@ -285,9 +292,35 @@ def _content_tokens(text: str) -> list:
     return [t for t in toks if t not in STOPWORDS] or toks
 
 
+def _stem(tok: str) -> str:
+    """Crude suffix stemmer for situation matching: 'deploying',
+    'deployed', and 'deploys' must all meet 'deploy'. Exact-word
+    matching silently dropped warnings whose lesson used a different
+    inflection than the brief's context — a safety feature failing
+    silently is worse than none."""
+    for suffix in ("ing", "ed", "es"):
+        if tok.endswith(suffix) and len(tok) - len(suffix) >= 3:
+            return tok[: -len(suffix)]
+    if tok.endswith("s") and len(tok) >= 4:
+        return tok[:-1]
+    return tok
+
+
 def _overlap(context: str, text: str) -> int:
-    words = re.findall(r"[a-z0-9']+", text.lower())
-    return sum(words.count(t) for t in set(_content_tokens(context)))
+    ctx = {_stem(t) for t in _content_tokens(context)}
+    words = [_stem(w) for w in re.findall(r"[a-z0-9']+", text.lower())]
+    return sum(words.count(t) for t in ctx)
+
+
+_INTENTION_TRIGGER = re.compile(r"WHEN (.+?) → DO ", re.IGNORECASE)
+
+
+def _intention_trigger(entry_text: str) -> str:
+    """The WHEN half of an intention. Matching must consider the trigger
+    only — matching the whole line fires intentions on words from their
+    ACTION half ('smoke suite' summoning a deploy intention)."""
+    m = _INTENTION_TRIGGER.search(entry_text)
+    return m.group(1) if m else entry_text
 
 
 def learn_lesson(store: Path, situation: str, rule: str, went_wrong: str = "") -> dict:
@@ -343,13 +376,22 @@ def brief(store: Path, context: str = "", limit: int = 10) -> dict:
     intentions = _bullets(store, "INTENTIONS.md")
     facts = _bullets(store, "MEMORY.md")
 
+    warnings_fallback = False
     if context:
         warnings = sorted(
             ((n, t) for n, t in lessons if _overlap(context, t) > 0),
             key=lambda nt: -_overlap(context, nt[1]))[:5]
+        if not warnings and lessons:
+            # Warnings are the safety layer: a context that matches no
+            # lesson must still show the recent ones, never zero. A
+            # brief that silently drops every warning undercuts the
+            # entire point of lessons.
+            warnings = lessons[-3:]
+            warnings_fallback = True
         triggered = sorted(
-            ((n, t) for n, t in intentions if _overlap(context, t) > 0),
-            key=lambda nt: -_overlap(context, nt[1]))[:limit]
+            ((n, t) for n, t in intentions
+             if _overlap(context, _intention_trigger(t)) > 0),
+            key=lambda nt: -_overlap(context, _intention_trigger(nt[1])))[:limit]
     else:
         warnings = lessons[-5:]
         triggered = intentions[-limit:]
@@ -365,6 +407,8 @@ def brief(store: Path, context: str = "", limit: int = 10) -> dict:
         f"Context: {context}" if context else "Context: (none given)",
         "",
         "## ⚠ Warnings — lessons learned (do not repeat)",
+        *((["(no lesson matched this context — showing the most recent lessons)"]
+           if warnings_fallback else [])),
         *[f"- {t}" for t in cite("LESSONS.md", warnings)],
         "",
         "## Intentions — when the trigger happens, do the action",
@@ -381,6 +425,7 @@ def brief(store: Path, context: str = "", limit: int = 10) -> dict:
     return {
         "brief": "\n".join(pack),
         "warnings": len(warnings),
+        "warnings_fallback": warnings_fallback,
         "intentions_triggered": len(triggered),
         "intentions_total": len(intentions),
         "lessons_total": len(lessons),
