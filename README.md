@@ -37,6 +37,20 @@ brand-new one:
 
 The server speaks MCP over stdio: `python3 agent_memory.py serve`
 
+**Easiest — uvx, no clone, no install** (verified end-to-end):
+
+```json
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/Nom-nom-hub/agent-memory", "agent-memory", "serve"],
+      "env": { "AGENT_MEMORY_DIR": "/path/to/your/memory-store" }
+    }
+  }
+}
+```
+
 **Claude Code**
 
 ```bash
@@ -77,10 +91,18 @@ Every tool is also a CLI subcommand with the same name minus the prefix
 
 ## Install as a command
 
+With [uv](https://docs.astral.sh/uv/) (recommended):
+
 ```bash
-pip install git+https://github.com/Nom-nom-hub/agent-memory
+uv tool install --from git+https://github.com/Nom-nom-hub/agent-memory agent-memory-mcp
 agent-memory --version
 agent-memory init
+```
+
+Or with pip:
+
+```bash
+pip install git+https://github.com/Nom-nom-hub/agent-memory
 ```
 
 ## Store layout
