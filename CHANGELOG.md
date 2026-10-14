@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.2 — 2026-10-14
+
+From the 0.3.1 confirmation session — the suggested stemmer fix,
+applied, plus the two outstanding cosmetic findings re-checked at this
+version (both reproduced, both fixed):
+
+- **Stemmer `-ss` pairs.** `address/addresses`, `boss/bosses`, and
+  `class/classes` did not match: the trailing-s rule stemmed "address"
+  to "addres" while "addresses" stemmed to "address". Words ending in
+  `-ss` now keep their final s. (The warnings fallback had been covering
+  this gap; now the match itself works.)
+- **NaN / Infinity response ids.** Python's `json` accepts these
+  non-standard constants, so a request with `"id": NaN` got a response
+  echoing `NaN` — invalid JSON that strict clients can't parse. Such
+  lines are now rejected at parse time (`parse_constant`) and skipped
+  like any other unparseable input.
+- **Empty batch silence.** A batch of `[]` previously got no response
+  at all; JSON-RPC 2.0 defines it as invalid, so it now gets a single
+  `-32600` error response.
+- Also probed, **not reproduced**: a stray 0-byte file from a failed
+  save (empty-text topic save, topic-path-is-a-directory, and
+  log-path-is-a-directory scenarios all fail cleanly with no stray
+  files). Left open; if it recurs with a concrete repro it gets a fix
+  and a regression test like everything else.
+- Test suite: 48 → 52.
+
 ## 0.3.1 — 2026-10-14
 
 Three bugs from the 0.3.0 field check — all in the new Behavior Memory

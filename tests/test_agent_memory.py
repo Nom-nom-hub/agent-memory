@@ -348,6 +348,64 @@ class FieldReport031Tests(unittest.TestCase):
         self.assertEqual(out2["intentions_triggered"], 1)
 
 
+class FieldReport032Tests(unittest.TestCase):
+    """v0.3.2: stemmer -ss pairs + the two re-checked cosmetic findings."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Path(self.tmp.name) / "s"
+        am.init_store(self.store)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_stemmer_ss_pairs_match(self):
+        for singular, plural in (("address", "addresses"),
+                                 ("boss", "bosses"),
+                                 ("class", "classes")):
+            self.assertEqual(am._stem(singular), am._stem(plural),
+                             f"{singular}/{plural}")
+        # Previously-working pairs are unaffected.
+        self.assertEqual(am._stem("deploys"), am._stem("deploy"))
+        self.assertEqual(am._stem("tests"), am._stem("test"))
+        self.assertEqual(am._stem("deploying"), am._stem("deploy"))
+
+    def test_brief_matches_address_lesson(self):
+        am.learn_lesson(self.store, situation="the office address changed",
+                        rule="confirm the address before mailing")
+        out = am.brief(self.store, context="updating the addresses file")
+        self.assertGreaterEqual(out["warnings"], 1)
+        self.assertFalse(out["warnings_fallback"])
+
+    def _serve(self, payload: bytes):
+        return subprocess.run(
+            [sys.executable, str(ROOT / "agent_memory.py"),
+             "--store", str(self.store), "serve"],
+            input=payload, capture_output=True, timeout=30)
+
+    def test_nan_and_infinity_ids_are_not_echoed(self):
+        payload = (b'{"jsonrpc":"2.0","id":NaN,"method":"ping"}\n'
+                   b'{"jsonrpc":"2.0","id":Infinity,"method":"ping"}\n'
+                   b'{"jsonrpc":"2.0","id":9,"method":"ping"}\n')
+        proc = self._serve(payload)
+        self.assertEqual(proc.returncode, 0)
+        text = proc.stdout.decode()
+        self.assertNotIn("NaN", text)
+        self.assertNotIn("Infinity", text)
+        self.assertIn('"id": 9', text)  # the valid request still answered
+
+    def test_empty_batch_gets_single_error_response(self):
+        payload = b'[]\n{"jsonrpc":"2.0","id":9,"method":"ping"}\n'
+        proc = self._serve(payload)
+        self.assertEqual(proc.returncode, 0)
+        lines = [json.loads(l) for l in proc.stdout.decode().splitlines()
+                 if l.strip()]
+        errors = [o for o in lines if isinstance(o, dict) and "error" in o]
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]["error"]["code"], -32600)
+        self.assertIn(9, [o.get("id") for o in lines])
+
+
 class ServerKillerRegressionTests(unittest.TestCase):
     """v0.2.2 regressions: the two remaining ways to kill the server."""
 

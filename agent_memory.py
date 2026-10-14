@@ -38,7 +38,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 
 # Legitimate MCP messages nest maybe a dozen levels. Anything past this
 # is hostile or broken, and deep nesting is exactly what makes the JSON
@@ -301,7 +301,9 @@ def _stem(tok: str) -> str:
     for suffix in ("ing", "ed", "es"):
         if tok.endswith(suffix) and len(tok) - len(suffix) >= 3:
             return tok[: -len(suffix)]
-    if tok.endswith("s") and len(tok) >= 4:
+    if tok.endswith("s") and not tok.endswith("ss") and len(tok) >= 4:
+        # Not -ss: 'address' must keep its final s or it can never meet
+        # 'addresses' (which stems to 'address' via the -es rule).
         return tok[:-1]
     return tok
 
@@ -822,6 +824,13 @@ def _max_json_depth(raw: str) -> int:
     return max_depth
 
 
+def _reject_json_constant(name: str):
+    """json.loads accepts NaN/Infinity by default — neither is valid
+    JSON, and echoing one back as a response id emits invalid JSON that
+    strict clients cannot parse. Treat such lines as unparseable."""
+    raise ValueError(f"invalid JSON constant: {name}")
+
+
 def serve(store: Path):
     _force_utf8_stdio()
     init_store(store)
@@ -835,16 +844,22 @@ def serve(store: Path):
                   file=sys.stderr)
             continue
         try:
-            msg = json.loads(raw)
-        except (json.JSONDecodeError, RecursionError):
+            msg = json.loads(raw, parse_constant=_reject_json_constant)
+        except (ValueError, RecursionError):
             print("agent-memory: skipped unparseable line", file=sys.stderr)
             continue
         try:
             if isinstance(msg, list):
-                # Legal JSON-RPC batch: answer each request, skip notifications.
-                resps = [r for r in (handle_message(store, m) for m in msg)
-                         if r is not None]
-                resp = resps if resps else None
+                if not msg:
+                    # An empty batch is invalid (JSON-RPC 2.0): answer with
+                    # a single error object instead of silence.
+                    resp = _rpc_error(None, -32600,
+                                      "invalid request: empty batch")
+                else:
+                    # Legal batch: answer each request, skip notifications.
+                    resps = [r for r in (handle_message(store, m) for m in msg)
+                             if r is not None]
+                    resp = resps if resps else None
             elif isinstance(msg, dict):
                 resp = handle_message(store, msg)
             else:
