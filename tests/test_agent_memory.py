@@ -62,6 +62,25 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(out["saved_to"], "topics/evil.md")
         self.assertTrue((self.store / "topics" / "evil.md").is_file())
 
+    def test_forget_removes_only_matching_lines(self):
+        am.save_fact(self.store, "The old office is in Tampa")
+        am.save_fact(self.store, "The new office is in Cape Coral")
+        out = am.forget(self.store, "old office is in Tampa")
+        self.assertEqual(out["removed_count"], 1)
+        self.assertEqual(am.search(self.store, "Tampa"), [])
+        self.assertTrue(am.search(self.store, "Cape Coral"))
+
+    def test_forget_keeps_headings(self):
+        out = am.forget(self.store, "MEMORY")
+        self.assertEqual(out["removed_count"], 0)
+
+    def test_recent_returns_newest_log_entries(self):
+        am.log_entry(self.store, "first thing")
+        am.log_entry(self.store, "second thing")
+        out = am.recent(self.store, limit=1)
+        self.assertEqual(len(out), 1)
+        self.assertIn("second thing", out[0]["text"])
+
     def test_status_counts(self):
         am.save_fact(self.store, "something countable")
         st = am.status(self.store)
@@ -100,8 +119,10 @@ class McpTests(unittest.TestCase):
                     replies[obj["id"]] = obj
             self.assertIn("result", replies[1])
             names = [t["name"] for t in replies[2]["result"]["tools"]]
-            self.assertEqual(len(names), 5)
+            self.assertEqual(len(names), 7)
             self.assertIn("memory_search", names)
+            self.assertIn("memory_forget", names)
+            self.assertIn("memory_recent", names)
             found = replies[4]["result"]["content"][0]["text"]
             self.assertIn("ORBIT-7", found)
 

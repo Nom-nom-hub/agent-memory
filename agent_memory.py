@@ -5,7 +5,7 @@ Memory is plain markdown files in a folder the user owns. This single file
 (standard library only) serves that store two ways:
 
   * as an MCP server over stdio (tools: memory_search, memory_get,
-    memory_save, memory_log, memory_status), and
+    memory_save, memory_log, memory_forget, memory_recent, memory_status), and
   * as a plain CLI with the same operations.
 
 Usage:
@@ -28,7 +28,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PROTOCOL_VERSION = "2024-11-05"
 
 MEMORY_TEMPLATE = """# MEMORY.md
@@ -180,6 +180,50 @@ def log_entry(store: Path, text: str) -> dict:
     return {"logged_to": rel, "entry": entry}
 
 
+def forget(store: Path, text: str, only_file: str = None) -> dict:
+    """Remove memory lines containing `text` (case-insensitive).
+
+    Headings are never removed. Returns exactly what was removed, with
+    citations, so a human can audit the correction.
+    """
+    needle = " ".join(text.split()).lower()
+    if not needle:
+        raise ValueError("nothing to forget")
+    removed = []
+    paths = [_safe_path(store, only_file)] if only_file else list(_iter_md_files(store))
+    for path in paths:
+        if not path.is_file():
+            continue
+        rel = str(path.relative_to(store))
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        kept = []
+        for i, line in enumerate(lines, start=1):
+            if needle in line.lower() and not line.lstrip().startswith("#"):
+                removed.append({"file": rel, "line": i, "text": line.strip()[:240]})
+            else:
+                kept.append(line)
+        if len(kept) != len(lines):
+            path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    return {"forgot": needle, "removed_count": len(removed), "removed": removed}
+
+
+def recent(store: Path, limit: int = 10) -> list:
+    """Most recent memory entries: newest daily-log bullets first."""
+    out = []
+    logs_dir = store / "logs"
+    if logs_dir.is_dir():
+        for path in sorted(logs_dir.glob("*.md"), reverse=True):
+            rel = str(path.relative_to(store))
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            for i in range(len(lines), 0, -1):
+                line = lines[i - 1].strip()
+                if line.startswith("- "):
+                    out.append({"file": rel, "line": i, "text": line[:240]})
+                    if len(out) >= limit:
+                        return out
+    return out
+
+
 def status(store: Path) -> dict:
     files = []
     total_lines = 0
@@ -253,6 +297,29 @@ TOOLS = [
         },
     },
     {
+        "name": "memory_forget",
+        "description": "Remove memory lines containing the given text "
+                       "(case-insensitive), across the store or in one file. "
+                       "Use to correct or delete a wrong/outdated memory. "
+                       "Returns exactly what was removed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "file": {"type": "string"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "memory_recent",
+        "description": "Return the most recent daily-log entries, newest first.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 10}},
+        },
+    },
+    {
         "name": "memory_status",
         "description": "Report the memory store location, files, and size.",
         "inputSchema": {"type": "object", "properties": {}},
@@ -270,6 +337,10 @@ def call_tool(store: Path, name: str, args: dict):
         return save_fact(store, args.get("text", ""), args.get("topic"))
     if name == "memory_log":
         return log_entry(store, args.get("text", ""))
+    if name == "memory_forget":
+        return forget(store, args.get("text", ""), args.get("file"))
+    if name == "memory_recent":
+        return recent(store, int(args.get("limit", 10)))
     if name == "memory_status":
         return status(store)
     raise ValueError(f"unknown tool: {name}")
@@ -357,6 +428,11 @@ def main(argv=None):
     p.add_argument("--topic", default=None)
     p = sub.add_parser("log", help="append to today's daily log")
     p.add_argument("text")
+    p = sub.add_parser("forget", help="remove memory lines containing text")
+    p.add_argument("text")
+    p.add_argument("--file", default=None)
+    p = sub.add_parser("recent", help="most recent daily-log entries")
+    p.add_argument("--limit", type=int, default=10)
     sub.add_parser("status", help="store status")
     sub.add_parser("serve", help="run the MCP stdio server")
 
@@ -374,6 +450,10 @@ def main(argv=None):
             out = save_fact(store, args.text, args.topic)
         elif args.cmd == "log":
             out = log_entry(store, args.text)
+        elif args.cmd == "forget":
+            out = forget(store, args.text, args.file)
+        elif args.cmd == "recent":
+            out = recent(store, args.limit)
         elif args.cmd == "status":
             out = status(store)
         elif args.cmd == "serve":

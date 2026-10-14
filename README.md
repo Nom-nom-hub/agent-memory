@@ -68,10 +68,20 @@ memory. That's the whole trick.
 | `memory_get` | Read a memory file (or a line window of it) |
 | `memory_save` | Save a durable fact to `MEMORY.md`, or to `topics/<topic>.md` |
 | `memory_log` | Append a timestamped entry to today's daily log |
+| `memory_forget` | Remove memory lines containing a text — correct or delete a wrong memory; returns exactly what was removed |
+| `memory_recent` | Most recent daily-log entries, newest first |
 | `memory_status` | Store location, file list, and size |
 
 Every tool is also a CLI subcommand with the same name minus the prefix
-(`search`, `get`, `save`, `log`, `status`).
+(`search`, `get`, `save`, `log`, `forget`, `recent`, `status`).
+
+## Install as a command
+
+```bash
+pip install git+https://github.com/Nom-nom-hub/agent-memory
+agent-memory --version
+agent-memory init
+```
 
 ## Store layout
 
@@ -90,7 +100,7 @@ refused, and topic names are slugified before they touch the filesystem.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests   # 9 tests, incl. a live MCP stdio round-trip
+python3 -m unittest discover -s tests   # 12 tests, incl. a live MCP stdio round-trip
 ```
 
 ## What v1 deliberately is not
@@ -102,4 +112,5 @@ See [SCOPE.md](SCOPE.md) for the full reasoning.
 
 ## Status
 
-v0.1.0 — working local build. Not yet published (no npm/PyPI/GitHub release).
+v0.2.0 — public repo: https://github.com/Nom-nom-hub/agent-memory
+Not yet on PyPI; install from GitHub (above) for now.

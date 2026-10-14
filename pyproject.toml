@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-memory-mcp"
+version = "0.2.0"
+description = "Portable, local-first persistent memory for AI agents — plain markdown files, served over MCP. Swap the agent, keep the memory."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["mcp", "ai-agent", "memory", "model-context-protocol", "llm"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Libraries",
+]
+
+[project.scripts]
+agent-memory = "agent_memory:main"
+
+[tool.setuptools]
+py-modules = ["agent_memory"]

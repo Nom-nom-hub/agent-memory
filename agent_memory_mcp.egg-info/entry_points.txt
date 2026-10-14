@@ -1,0 +1,2 @@
+[console_scripts]
+agent-memory = agent_memory:main
