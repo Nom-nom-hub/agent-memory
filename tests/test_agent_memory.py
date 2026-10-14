@@ -554,6 +554,50 @@ class UnicodeSearchTests(unittest.TestCase):
         self.assertTrue(am.search(self.store, "ひらがな"))
 
 
+class IndicAndUnsegmentedScriptTests(unittest.TestCase):
+    """v0.3.6: the Mc gap — the third appearance of the same silent
+    shape (CJK in 0.3.4, accents in 0.3.5). Indic vowel signs are
+    category Mc: not word characters, so काम split into 1-char
+    fragments the filter dropped, and search returned [] with no error.
+    Thai/Lao/Burmese/Tibetan additionally need bigram indexing because
+    they are written without word boundaries."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Path(self.tmp.name) / "s"
+        am.init_store(self.store)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_mc_vowel_signs_fold_to_consonant_skeleton(self):
+        self.assertEqual(am._tokens_of("काम"), ["कम"])
+        kept = [t for t in am._tokens_of("काम") if am._keep_token(t)]
+        self.assertEqual(kept, ["कम"])
+
+    def test_hindi_and_bengali_searchable(self):
+        am.save_fact(self.store, "मेरा काम चल रहा है")
+        self.assertTrue(am.search(self.store, "काम"))
+        am.save_fact(self.store, "আমি ঢাকা যাই")
+        self.assertTrue(am.search(self.store, "ঢাকা"))
+
+    def test_thai_word_inside_unspaced_text(self):
+        am.save_fact(self.store, "กรุงเทพมหานครเป็นเมืองหลวง")
+        self.assertTrue(am.search(self.store, "กรุงเทพ"))
+
+    def test_lao_burmese_tibetan_searchable(self):
+        am.save_fact(self.store, "ສະບາຍດີຕອນເຊົ້າ")
+        self.assertTrue(am.search(self.store, "ສະບາຍ"))
+        am.save_fact(self.store, "မြန်မာဘာသာစကား")
+        self.assertTrue(am.search(self.store, "မြန်မာ"))
+        am.save_fact(self.store, "བོད་སྐད་ཡིག")
+        self.assertTrue(am.search(self.store, "བོད"))
+
+    def test_single_nonlatin_letter_query_never_silently_empty(self):
+        am.save_fact(self.store, "क अक्षर से शुरू")
+        self.assertTrue(am.search(self.store, "क"))
+
+
 class ServerKillerRegressionTests(unittest.TestCase):
     """v0.2.2 regressions: the two remaining ways to kill the server."""
 

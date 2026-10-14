@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.3.6 — 2026-10-14
+
+**The Mc gap — the same silent shape, third appearance — plus a
+correction to the correction record.**
+
+- **Indic scripts were silently unsearchable.** Vowel signs in
+  Devanagari, Bengali, Tamil and relatives are Unicode category Mc
+  (spacing marks): not word characters, so the tokenizer split काम
+  into ['क','म'], the length filter dropped both, and search returned
+  [] with no error — the CJK shape (0.3.4) and the accent shape
+  (0.3.5) again. The fold now drops Mc as well as Mn, reducing query
+  and text to the same consonant skeleton (काम → कम on both sides).
+  A last-resort guard backs it up: a non-Latin query whose tokens all
+  fall to the filter falls back to its raw tokens instead of silently
+  returning nothing.
+- **Unsegmented scripts get bigram indexing.** Thai, Lao, Burmese and
+  Tibetan are written without word boundaries; word-run tokenization
+  made a single word inside an unspaced string unfindable
+  (กรุงเทพ inside กรุงเทพมหานคร → 0 hits). Those ranges now index as
+  unigrams + bigrams alongside CJK.
+- **Coverage honesty:** 0.3.5's suite named only the scripts it
+  tested, while the README claimed Thai outright. This release adds
+  consequence tests for Hindi, Bengali, Thai, Lao, Burmese and
+  Tibetan, and the README now names exactly the tested set.
+- **The annotation that wasn't.** 0.3.5's report claimed the 0.3.4
+  changelog entry was annotated in the published tree. The closing
+  check found it unannotated at the tag — the edit existed only as an
+  uncommitted working-tree change (a same-file parallel-edit race in
+  the release process; the README's version footer and test count at
+  v0.3.5 were stale for the same reason). All of it is committed in
+  this release, and the release process now verifies the tagged tree
+  itself (`git show <tag>:<file>`), not the working copy. The v0.3.5
+  tag remains as published — wrong gloss, stale footer and all; this
+  entry is its correction.
+- Test suite: 65 → 70.
+
 ## 0.3.5 — 2026-10-14
 
 **A false claim in 0.3.4, corrected — and the capability gap behind it
@@ -46,7 +82,11 @@ and returned `[]` — CJK memories were stored and readable via
   adjacent-character matches naturally outscore scattered ones.
 - Known remaining property, pinned by test rather than left implicit:
   accented Latin characters split tokens ("café" indexes as "caf") —
-  unchanged from earlier versions.
+  unchanged from earlier versions. → **Corrected in 0.3.5:** the
+  consequence of this property was stated backwards in the 0.3.4
+  release notes (unaccented queries MISSED accented text), the pin
+  tested the token instead of the consequence, and non-CJK scripts
+  were not searchable at all. 0.3.5 fixes all three.
 - Test suite: 56 → 61.
 
 ## 0.3.3 — 2026-10-14

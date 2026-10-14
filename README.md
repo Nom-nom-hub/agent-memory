@@ -98,7 +98,7 @@ Agent Memory also stores **behavior**: what the agent has learned to *do*.
 
 | Tool | What it does |
 |---|---|
-| `memory_search` | Ranked keyword search over all memory files, with file + line citations; lessons boosted, every hit tagged by kind (fact / lesson / intention / log / topic). Matching is accent-folded (`cafe` finds `café`) and script-aware: Unicode scripts (Cyrillic, Greek, Hebrew, Arabic, Thai…) search as words; CJK (Han / kana / Hangul) indexes by character bigrams |
+| `memory_search` | Ranked keyword search over all memory files, with file + line citations; lessons boosted, every hit tagged by kind (fact / lesson / intention / log / topic). Matching is mark-folded (`cafe` finds `café`; काम finds its folded skeleton) — word scripts (Latin, Cyrillic, Greek, Hebrew, Arabic, Indic…) search as words, and scripts written without word boundaries (CJK, Thai, Lao, Burmese, Tibetan) index by character bigrams. Every script named here has a consequence test in the suite |
 | `memory_get` | Read a memory file (or a line window of it) |
 | `memory_save` | Save a durable fact to `MEMORY.md`, or to `topics/<topic>.md` |
 | `memory_log` | Append a timestamped entry to today's daily log |
@@ -148,7 +148,7 @@ refused, and topic names are slugified before they touch the filesystem.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests   # 61 tests, incl. live MCP round-trips, regressions for issues #1–#3, both post-0.2.1 server-killers, and every field report since
+python3 -m unittest discover -s tests   # 70 tests, incl. live MCP round-trips, regressions for issues #1–#3, both post-0.2.1 server-killers, and every field report since
 ```
 
 ## What v1 deliberately is not
@@ -160,5 +160,5 @@ See [SCOPE.md](SCOPE.md) for the full reasoning.
 
 ## Status
 
-v0.3.4 — public repo: https://github.com/Nom-nom-hub/agent-memory — see [CHANGELOG.md](CHANGELOG.md)
+v0.3.6 — public repo: https://github.com/Nom-nom-hub/agent-memory — see [CHANGELOG.md](CHANGELOG.md)
 Not yet on PyPI; install from GitHub (above) for now.

@@ -39,7 +39,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 
 # Legitimate MCP messages nest maybe a dozen levels. Anything past this
 # is hostile or broken, and deep nesting is exactly what makes the JSON
@@ -154,27 +154,47 @@ def _now_time() -> str:
 
 # ------------------------------------------------------------ operations ----
 
-_CJK_RUN = re.compile(
-    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+")
+# Scripts written without word boundaries get bigram indexing: CJK
+# (Han, kana, Hangul) plus Thai, Lao, Burmese and Tibetan. Word runs in
+# those ranges would otherwise make a query match only a whole
+# unsegmented string — a single word inside it silently returned [].
+_BIGRAM_RUN = re.compile(
+    r"[\u0e00-\u0e7f\u0e80-\u0eff\u0f00-\u0fff\u1000-\u109f"
+    r"\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+")
 _WORD_RUN = re.compile(r"[^\W_]+(?:'[^\W_]+)*", re.UNICODE)
+
+_BIGRAM_RANGES = ((0x0E00, 0x0E7F), (0x0E80, 0x0EFF), (0x0F00, 0x0FFF),
+                  (0x1000, 0x109F), (0x3040, 0x30FF), (0x3400, 0x4DBF),
+                  (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0xAC00, 0xD7AF))
 
 
 def _is_cjk(run: str) -> bool:
-    return bool(run) and ord(run[0]) >= 0x3040
+    """True if the run starts in a bigram-indexed script range."""
+    if not run:
+        return False
+    cp = ord(run[0])
+    return any(lo <= cp <= hi for lo, hi in _BIGRAM_RANGES)
 
 
 def _fold(text) -> str:
     """Case- and accent-fold text for matching: NFKD, drop combining
-    marks, then NFC-recompose and lowercase.
+    marks (Mn AND Mc), then NFC-recompose and lowercase.
 
     The recompose step is load-bearing: bare NFKD decomposes Hangul
     syllables into Jamo, which silently makes Korean unsearchable all
     over again. With folding, 'cafe' and 'café' produce the same token
     — in 0.3.4 the claim ran the wrong way (an unaccented query MISSED
-    accented text, because the text tokenized to 'caf')."""
+    accented text, because the text tokenized to 'caf').
+
+    Dropping Mc (spacing marks) matters as much as Mn: in Indic
+    scripts the vowel signs are Mc, they are NOT word characters to
+    the tokenizer, and without folding they split every word into
+    1-char consonant fragments that the token filter then discarded —
+    काम tokenized to ['क','म'], kept [], searched to nothing. Folded,
+    both query and text reduce to the same consonant skeleton (कम)."""
     decomposed = unicodedata.normalize("NFKD", str(text))
     stripped = "".join(ch for ch in decomposed
-                       if unicodedata.category(ch) != "Mn")
+                       if unicodedata.category(ch) not in ("Mn", "Mc"))
     return unicodedata.normalize("NFC", stripped).lower()
 
 
@@ -189,7 +209,7 @@ def _tokens_of(text) -> list:
     folded = _fold(text)
     out = []
     pos = 0
-    for m in _CJK_RUN.finditer(folded):
+    for m in _BIGRAM_RUN.finditer(folded):
         out.extend(_WORD_RUN.findall(folded[pos:m.start()]))
         run = m.group(0)
         if len(run) == 1:
@@ -210,6 +230,11 @@ def search(store: Path, query: str, limit: int = 8) -> list:
     limit = _as_int(limit, 8, 1, 50)
     all_tokens = [t for t in _tokens_of(query) if _keep_token(t)]
     tokens = [t for t in all_tokens if t not in STOPWORDS] or all_tokens
+    if not tokens and any(ord(c) > 127 for c in str(query)):
+        # Last-resort guard: a non-Latin query must never silently
+        # return [] just because every token fell to the length filter.
+        # Use the raw tokens and let matching decide.
+        tokens = _tokens_of(query)
     if not tokens:
         return []
     phrase = str(query).strip().lower()
