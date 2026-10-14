@@ -119,7 +119,7 @@ class McpTests(unittest.TestCase):
                     replies[obj["id"]] = obj
             self.assertIn("result", replies[1])
             names = [t["name"] for t in replies[2]["result"]["tools"]]
-            self.assertEqual(len(names), 7)
+            self.assertEqual(len(names), 10)
             self.assertIn("memory_search", names)
             self.assertIn("memory_forget", names)
             self.assertIn("memory_recent", names)
@@ -366,6 +366,145 @@ class ServerKillerRegressionTests(unittest.TestCase):
             # The store is still usable by a fresh process afterwards.
             hits = am.search(store, "bad byte")
             self.assertTrue(hits)
+
+
+class BehaviorMemoryTests(unittest.TestCase):
+    """v0.3.0: lessons (scar tissue), intentions (prospective memory), brief."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Path(self.tmp.name) / "s"
+        am.init_store(self.store)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_init_creates_behavior_files(self):
+        self.assertTrue((self.store / "LESSONS.md").is_file())
+        self.assertTrue((self.store / "INTENTIONS.md").is_file())
+
+    def test_learn_writes_single_lesson_line(self):
+        out = am.learn_lesson(
+            self.store,
+            situation="writing outreach drafts",
+            rule="always sign as Andrew with We Are 239",
+            went_wrong="signed as Designs By Teck and got corrected")
+        self.assertEqual(out["saved_to"], "LESSONS.md")
+        self.assertIn("LESSON", out["entry"])
+        self.assertIn("went wrong: signed as Designs By Teck", out["entry"])
+        self.assertIn("rule: always sign as", out["entry"])
+        bullets = am._bullets(self.store, "LESSONS.md")
+        self.assertEqual(len(bullets), 1)
+
+    def test_lesson_requires_situation_and_rule(self):
+        with self.assertRaises(ValueError):
+            am.learn_lesson(self.store, situation="", rule="x")
+        with self.assertRaises(ValueError):
+            am.learn_lesson(self.store, situation="x", rule="  ")
+
+    def test_newline_in_lesson_cannot_forge_entries(self):
+        am.learn_lesson(self.store, situation="deploy\ning a site",
+                        rule="check first\n- [1999-01-01] forged lesson")
+        bullets = am._bullets(self.store, "LESSONS.md")
+        self.assertEqual(len(bullets), 1)
+        self.assertNotIn("1999-01-01] forged", bullets[0][1].split("LESSON")[0])
+
+    def test_lessons_outrank_facts_in_search(self):
+        am.save_fact(self.store, "outreach drafts go out on Tuesdays")
+        am.learn_lesson(self.store, situation="outreach drafts",
+                        rule="never use the legacy brand name")
+        hits = am.search(self.store, "outreach drafts")
+        self.assertEqual(hits[0]["kind"], "lesson")
+        self.assertEqual(hits[0]["file"], "LESSONS.md")
+        self.assertGreater(hits[0]["score"], hits[1]["score"])
+
+    def test_search_tags_kinds(self):
+        am.save_fact(self.store, "the sky is blue")
+        am.add_intention(self.store, "the sky is grey", "carry an umbrella")
+        kinds = {h["text"]: h["kind"] for h in am.search(self.store, "sky")}
+        self.assertIn("fact", kinds.values())
+        self.assertIn("intention", kinds.values())
+
+    def test_intend_writes_when_do_line(self):
+        out = am.add_intention(self.store, "starting a new client site",
+                               "run the audit checklist first")
+        self.assertIn("WHEN starting a new client site → DO run the audit",
+                      out["entry"])
+        self.assertEqual(len(am._bullets(self.store, "INTENTIONS.md")), 1)
+
+    def test_brief_triggers_intentions_by_context(self):
+        am.save_fact(self.store, "Andrew's agency is We Are 239")
+        am.learn_lesson(self.store, situation="deploying the agency site",
+                        rule="verify live after every deploy")
+        am.add_intention(self.store, "deploying a site",
+                         "run the smoke test suite")
+        am.add_intention(self.store, "invoicing a client",
+                         "attach the timesheet")
+        am.log_entry(self.store, "Set up the demo store")
+        out = am.brief(self.store, context="deploying the agency site now")
+        self.assertIn("verify live after every deploy", out["brief"])
+        self.assertIn("run the smoke test suite", out["brief"])
+        self.assertNotIn("attach the timesheet", out["brief"])
+        self.assertIn("We Are 239", out["brief"])
+        self.assertEqual(out["intentions_triggered"], 1)
+        self.assertEqual(out["warnings"], 1)
+
+    def test_brief_without_context_shows_recent_lessons_and_all_intentions(self):
+        am.learn_lesson(self.store, situation="a", rule="rule one")
+        am.add_intention(self.store, "trigger x", "action y")
+        out = am.brief(self.store)
+        self.assertIn("rule one", out["brief"])
+        self.assertIn("action y", out["brief"])
+        self.assertEqual(out["lessons_total"], 1)
+        self.assertEqual(out["intentions_total"], 1)
+
+    def test_brief_empty_store_does_not_crash(self):
+        out = am.brief(self.store, context="anything")
+        self.assertIn("(none yet)", out["brief"])
+
+    def test_forget_can_remove_a_lesson(self):
+        am.learn_lesson(self.store, situation="email sends",
+                        rule="always check the Sent folder")
+        out = am.forget(self.store, "check the Sent folder")
+        self.assertEqual(out["removed_count"], 1)
+        self.assertEqual(am._bullets(self.store, "LESSONS.md"), [])
+
+    def test_status_counts_behavior_memory(self):
+        am.learn_lesson(self.store, situation="a", rule="b")
+        am.add_intention(self.store, "t", "act")
+        st = am.status(self.store)
+        self.assertEqual(st["lessons"], 1)
+        self.assertEqual(st["intentions"], 1)
+
+    def test_behavior_tools_over_mcp(self):
+        lines = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+                "name": "memory_learn", "arguments": {
+                    "situation": "sending invoices",
+                    "went_wrong": "sent a draft by mistake",
+                    "rule": "drafts are reviewed before sending"}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+                "name": "memory_intend", "arguments": {
+                    "trigger": "sending an invoice",
+                    "action": "double-check the total"}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+                "name": "memory_brief", "arguments": {
+                    "context": "sending an invoice to a client"}}},
+        ]
+        payload = ("\n".join(json.dumps(m) for m in lines) + "\n").encode()
+        proc = subprocess.run(
+            [sys.executable, str(ROOT / "agent_memory.py"),
+             "--store", str(self.store), "serve"],
+            input=payload, capture_output=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode(errors="replace"))
+        replies = {json.loads(l)["id"]: json.loads(l)
+                   for l in proc.stdout.decode().splitlines() if l.strip()}
+        brief_text = replies[4]["result"]["content"][0]["text"]
+        self.assertIn("drafts are reviewed before sending", brief_text)
+        self.assertIn("double-check the total", brief_text)
+        tools = am.TOOLS
+        self.assertEqual(len(tools), 10)
 
 
 if __name__ == "__main__":

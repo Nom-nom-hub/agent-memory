@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.0 — 2026-10-14
+
+**Behavior Memory** — a memory type the rest of the field doesn't have.
+Competitors store facts (what the agent knows); 0.3.0 adds memory that
+changes what the agent *does*:
+
+- **`memory_learn` → LESSONS.md** — scar tissue: situation, what went
+  wrong, the rule it taught. Lessons score ×3 in `memory_search` (they
+  outrank equally-matching facts) and lead every brief.
+- **`memory_intend` → INTENTIONS.md** — prospective memory:
+  `WHEN <trigger> → DO <action>`, surfaced by situation rather than by
+  search.
+- **`memory_brief`** — the session-start pack in one call: warnings,
+  intentions triggered by the brief's context argument, core facts, and
+  recent activity, each line cited `file:line`.
+- Search hits are now tagged by `kind` (fact / lesson / intention / log /
+  topic); `memory_status` reports lesson and intention counts.
+- `init` scaffolds the two new files; existing stores gain them on the
+  next `init`/`learn`/`intend` call.
+- Side effect worth noting: `memory_forget` now removes only bullet
+  lines. Memory entries are bullets by construction; headings and prose
+  scaffolding (including the new file templates, whose text mentions
+  "memory_learn" etc.) can no longer be collateral damage of a forget.
+- Test suite: 29 → 42 tests, including the full Behavior Memory flow
+  over live MCP (learn in one call, intend in another, brief in a third
+  surfaces both), newline-injection resistance for lesson fields, and
+  lesson-over-fact ranking. demo.sh now teaches a fact, a lesson, and an
+  intention in process 1 and briefs a fresh process 2.
+
 ## 0.2.2 — 2026-10-14
 
 The two remaining server-killers, reported right after 0.2.1:

@@ -17,6 +17,13 @@
 - Keyword search with ranked snippets and file/line citations.
 - Path safety: reads/writes can never escape the store directory.
 
+## v0.3 — Behavior Memory (added 2026-10-14)
+The differentiator: competitors store facts; we also store behavior.
+- `LESSONS.md` + `memory_learn`: mistakes and the rule they taught ("scar tissue"). Lessons outrank facts in search and lead every brief.
+- `INTENTIONS.md` + `memory_intend`: prospective memory — WHEN a trigger happens, DO an action — surfaced by situation in the brief, not by search.
+- `memory_brief`: the session-start pack (warnings → triggered intentions → core facts → recent activity), all cited.
+- Deliberately still no embeddings, no automatic capture, no cloud: behavior entries are curated exactly like facts.
+
 ## v1 — deliberately NOT in scope
 - No embeddings / vector search (keyword + citations first; semantics later if real use demands it).
 - No cloud sync, no multi-user permissions, no GUI.

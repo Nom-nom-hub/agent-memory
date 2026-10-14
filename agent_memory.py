@@ -5,8 +5,14 @@ Memory is plain markdown files in a folder the user owns. This single file
 (standard library only) serves that store two ways:
 
   * as an MCP server over stdio (tools: memory_search, memory_get,
-    memory_save, memory_log, memory_forget, memory_recent, memory_status), and
+    memory_save, memory_log, memory_forget, memory_recent, memory_status,
+    memory_learn, memory_intend, memory_brief), and
   * as a plain CLI with the same operations.
+
+Beyond facts, the store holds Behavior Memory: LESSONS.md (mistakes and
+the rule they taught — "scar tissue") and INTENTIONS.md (prospective
+memory: WHEN a trigger happens, DO an action). memory_brief assembles
+all of it into a session-start pack, with lessons ranked above facts.
 
 Usage:
   python3 agent_memory.py [--store DIR] init
@@ -14,6 +20,9 @@ Usage:
   python3 agent_memory.py [--store DIR] search "query"
   python3 agent_memory.py [--store DIR] get MEMORY.md [--from N] [--lines N]
   python3 agent_memory.py [--store DIR] log "what happened today"
+  python3 agent_memory.py [--store DIR] learn --situation S [--went-wrong W] --rule R
+  python3 agent_memory.py [--store DIR] intend --when TRIGGER --do ACTION
+  python3 agent_memory.py [--store DIR] brief ["current context"]
   python3 agent_memory.py [--store DIR] status
   python3 agent_memory.py [--store DIR] serve        # MCP stdio server
 
@@ -29,7 +38,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.2.2"
+VERSION = "0.3.0"
 
 # Legitimate MCP messages nest maybe a dozen levels. Anything past this
 # is hostile or broken, and deep nesting is exactly what makes the JSON
@@ -43,6 +52,24 @@ Durable facts this agent should remember across sessions.
 Humans can edit this file directly — the agent reads the same text you do.
 
 ## Saved facts
+"""
+
+LESSONS_TEMPLATE = """# LESSONS.md — Behavior Memory: scar tissue
+
+Mistakes made once, and the rule each one taught. Written by memory_learn.
+Lessons outrank facts in search and lead every memory_brief: a warning
+exists to be hit BEFORE the mistake repeats, not found after.
+
+## Lessons
+"""
+
+INTENTIONS_TEMPLATE = """# INTENTIONS.md — Behavior Memory: prospective memory
+
+Things to do WHEN a trigger happens. Written by memory_intend.
+Intentions surface in memory_brief when the session context matches
+their trigger — memory for the future, retrieved by situation.
+
+## Intentions
 """
 
 STOPWORDS = {
@@ -65,11 +92,14 @@ def resolve_store(cli_value):
 def init_store(store: Path) -> dict:
     (store / "logs").mkdir(parents=True, exist_ok=True)
     (store / "topics").mkdir(parents=True, exist_ok=True)
-    mem = store / "MEMORY.md"
     created = []
-    if not mem.exists():
-        mem.write_text(MEMORY_TEMPLATE, encoding="utf-8")
-        created.append("MEMORY.md")
+    for name, template in (("MEMORY.md", MEMORY_TEMPLATE),
+                           ("LESSONS.md", LESSONS_TEMPLATE),
+                           ("INTENTIONS.md", INTENTIONS_TEMPLATE)):
+        target = store / name
+        if not target.exists():
+            target.write_text(template, encoding="utf-8")
+            created.append(name)
     return {"store": str(store), "created": created, "ok": True}
 
 
@@ -137,6 +167,16 @@ def search(store: Path, query: str, limit: int = 8) -> list:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             continue
+        if path.name == "LESSONS.md":
+            kind = "lesson"
+        elif path.name == "INTENTIONS.md":
+            kind = "intention"
+        elif rel.startswith("logs/"):
+            kind = "log"
+        elif rel.startswith("topics/"):
+            kind = "topic"
+        else:
+            kind = "fact"
         for i, line in enumerate(lines, start=1):
             low = line.lower()
             words = re.findall(r"[a-z0-9']+", low)
@@ -146,10 +186,15 @@ def search(store: Path, query: str, limit: int = 8) -> list:
             score = hits
             if len(phrase) >= 4 and phrase in low:
                 score += 5
+            if kind == "lesson":
+                # Behavior Memory: a warning exists to be hit BEFORE the
+                # mistake repeats. Lessons outrank equally-matching facts.
+                score *= 3
             results.append({
                 "file": rel,
                 "line": i,
                 "score": score,
+                "kind": kind,
                 "text": line.strip()[:240],
             })
     results.sort(key=lambda r: (-r["score"], r["file"], r["line"]))
@@ -212,11 +257,144 @@ def log_entry(store: Path, text: str) -> dict:
     return {"logged_to": rel, "entry": entry}
 
 
-def forget(store: Path, text: str, only_file: str = None) -> dict:
-    """Remove memory lines containing `text` (case-insensitive).
+# ------------------------------------------------------- behavior memory ----
 
-    Headings are never removed. Returns exactly what was removed, with
-    citations, so a human can audit the correction.
+def _one_line(text) -> str:
+    """Collapse any input to a single line. Memory entries are single
+    lines by construction; raw newlines in user/agent input would let
+    one call forge extra dated entries."""
+    return " ".join(str(text).split())
+
+
+def _bullets(store: Path, rel: str) -> list:
+    """(line_number, text) for every bullet entry in a store file."""
+    target = store / rel
+    if not target.is_file() or not _within_store(store, target):
+        return []
+    out = []
+    lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    for i, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            out.append((i, stripped))
+    return out
+
+
+def _content_tokens(text: str) -> list:
+    toks = [t for t in re.findall(r"[a-z0-9']+", str(text).lower()) if len(t) >= 2]
+    return [t for t in toks if t not in STOPWORDS] or toks
+
+
+def _overlap(context: str, text: str) -> int:
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    return sum(words.count(t) for t in set(_content_tokens(context)))
+
+
+def learn_lesson(store: Path, situation: str, rule: str, went_wrong: str = "") -> dict:
+    """Record Behavior Memory: a mistake and the rule it taught.
+
+    Lessons are the store's scar tissue — they outrank facts in search
+    and lead every brief, so the next agent (any agent) hits the warning
+    before repeating the mistake instead of after."""
+    init_store(store)
+    situation = _one_line(situation)
+    rule = _one_line(rule)
+    went_wrong = _one_line(went_wrong) if went_wrong else ""
+    if not situation or not rule:
+        raise ValueError("a lesson needs at least a situation and a rule")
+    body = f"situation: {situation}"
+    if went_wrong:
+        body += f" | went wrong: {went_wrong}"
+    body += f" | rule: {rule}"
+    entry = f"- [{_today()}] LESSON — {body}"
+    target = _safe_path(store, "LESSONS.md")
+    with target.open("a", encoding="utf-8") as fh:
+        fh.write(entry + "\n")
+    return {"saved_to": "LESSONS.md", "entry": entry}
+
+
+def add_intention(store: Path, trigger: str, action: str) -> dict:
+    """Record prospective memory: WHEN a trigger happens, DO an action.
+
+    Intentions are retrieved by situation, not by search: memory_brief
+    surfaces the ones whose trigger matches the session's context."""
+    init_store(store)
+    trigger = _one_line(trigger)
+    action = _one_line(action)
+    if not trigger or not action:
+        raise ValueError("an intention needs both a trigger and an action")
+    entry = f"- [{_today()}] WHEN {trigger} → DO {action}"
+    target = _safe_path(store, "INTENTIONS.md")
+    with target.open("a", encoding="utf-8") as fh:
+        fh.write(entry + "\n")
+    return {"saved_to": "INTENTIONS.md", "entry": entry}
+
+
+def brief(store: Path, context: str = "", limit: int = 10) -> dict:
+    """Assemble the session-start pack: warnings first, then intentions
+    triggered by the context, then core facts, then recent activity.
+
+    With a context, lessons and intentions are ranked by trigger match;
+    without one, the most recent lessons lead and all intentions show.
+    """
+    limit = _as_int(limit, 10, 1, 50)
+    context = _one_line(context) if context else ""
+    lessons = _bullets(store, "LESSONS.md")
+    intentions = _bullets(store, "INTENTIONS.md")
+    facts = _bullets(store, "MEMORY.md")
+
+    if context:
+        warnings = sorted(
+            ((n, t) for n, t in lessons if _overlap(context, t) > 0),
+            key=lambda nt: -_overlap(context, nt[1]))[:5]
+        triggered = sorted(
+            ((n, t) for n, t in intentions if _overlap(context, t) > 0),
+            key=lambda nt: -_overlap(context, nt[1]))[:limit]
+    else:
+        warnings = lessons[-5:]
+        triggered = intentions[-limit:]
+    core_facts = facts[-8:]
+    activity = recent(store, 5)
+
+    def cite(rel, items):
+        return [f"{text[2:] if text.startswith('- ') else text} [{rel}:{n}]"
+                for n, text in items] or ["(none yet)"]
+
+    pack = [
+        "# Agent Memory brief",
+        f"Context: {context}" if context else "Context: (none given)",
+        "",
+        "## ⚠ Warnings — lessons learned (do not repeat)",
+        *[f"- {t}" for t in cite("LESSONS.md", warnings)],
+        "",
+        "## Intentions — when the trigger happens, do the action",
+        *[f"- {t}" for t in cite("INTENTIONS.md", triggered)],
+        "",
+        "## Core facts",
+        *[f"- {t}" for t in cite("MEMORY.md", core_facts)],
+        "",
+        "## Recent activity",
+        *([f"- {e['text'][2:] if e['text'].startswith('- ') else e['text']} "
+           f"[{e['file']}:{e['line']}]" for e in activity]
+          or ["- (none yet)"]),
+    ]
+    return {
+        "brief": "\n".join(pack),
+        "warnings": len(warnings),
+        "intentions_triggered": len(triggered),
+        "intentions_total": len(intentions),
+        "lessons_total": len(lessons),
+        "facts_shown": len(core_facts),
+    }
+
+
+def forget(store: Path, text: str, only_file: str = None) -> dict:
+    """Remove memory entries containing `text` (case-insensitive).
+
+    Only bullet lines are memory entries — headings and prose
+    scaffolding (file templates, human notes) are never removed.
+    Returns exactly what was removed, with citations, so a human can
+    audit the correction.
     """
     needle = " ".join(text.split()).lower()
     if not needle:
@@ -226,14 +404,14 @@ def forget(store: Path, text: str, only_file: str = None) -> dict:
     for path in paths:
         if not path.is_file():
             continue
-        try:
+        try:  # only bullet lines are memory entries; prose is scaffolding
             rel = path.resolve().relative_to(store.resolve()).as_posix()
         except ValueError:
             continue
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         kept = []
         for i, line in enumerate(lines, start=1):
-            if needle in line.lower() and not line.lstrip().startswith("#"):
+            if needle in line.lower() and line.lstrip().startswith("- "):
                 removed.append({"file": rel, "line": i, "text": line.strip()[:240]})
             else:
                 kept.append(line)
@@ -287,6 +465,8 @@ def status(store: Path) -> dict:
         "files": files,
         "file_count": len(files),
         "total_lines": total_lines,
+        "lessons": len(_bullets(store, "LESSONS.md")),
+        "intentions": len(_bullets(store, "INTENTIONS.md")),
         "version": VERSION,
     }
 
@@ -390,6 +570,52 @@ TOOLS = [
         "description": "Report the memory store location, files, and size.",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "memory_learn",
+        "description": "Record a LESSON (Behavior Memory): something went "
+                       "wrong, or the user corrected you, and the rule that "
+                       "must govern future behavior. Lessons outrank facts "
+                       "in search and lead every brief, so the next agent "
+                       "hits the warning before repeating the mistake.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "situation": {"type": "string"},
+                "went_wrong": {"type": "string"},
+                "rule": {"type": "string"},
+            },
+            "required": ["situation", "rule"],
+        },
+    },
+    {
+        "name": "memory_intend",
+        "description": "Record an INTENTION (prospective memory): when a "
+                       "trigger situation occurs, do an action. Intentions "
+                       "surface automatically in memory_brief when the "
+                       "session context matches their trigger.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "trigger": {"type": "string"},
+                "action": {"type": "string"},
+            },
+            "required": ["trigger", "action"],
+        },
+    },
+    {
+        "name": "memory_brief",
+        "description": "Assemble the session-start brief: lessons/warnings "
+                       "first, intentions triggered by the given context, "
+                       "core facts, and recent activity — each with "
+                       "file:line citations. Call this when starting work.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "context": {"type": "string"},
+                "limit": {"type": "integer", "default": 10},
+            },
+        },
+    },
 ]
 
 
@@ -419,6 +645,20 @@ def call_tool(store: Path, name: str, args: dict):
         return recent(store, _as_int(args.get("limit", 10), 10, 1, 100))
     if name == "memory_status":
         return status(store)
+    if name == "memory_learn":
+        went = args.get("went_wrong")
+        if went is not None and not isinstance(went, str):
+            raise ValueError("went_wrong must be a string")
+        return learn_lesson(store, _as_text(args.get("situation"), "situation"),
+                            _as_text(args.get("rule"), "rule"), went or "")
+    if name == "memory_intend":
+        return add_intention(store, _as_text(args.get("trigger"), "trigger"),
+                             _as_text(args.get("action"), "action"))
+    if name == "memory_brief":
+        ctx = args.get("context")
+        if ctx is not None and not isinstance(ctx, str):
+            raise ValueError("context must be a string")
+        return brief(store, ctx or "", _as_int(args.get("limit", 10), 10, 1, 50))
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -612,6 +852,16 @@ def main(argv=None):
     p.add_argument("--file", default=None)
     p = sub.add_parser("recent", help="most recent daily-log entries")
     p.add_argument("--limit", type=int, default=10)
+    p = sub.add_parser("learn", help="record a lesson (Behavior Memory)")
+    p.add_argument("--situation", required=True)
+    p.add_argument("--went-wrong", default="")
+    p.add_argument("--rule", required=True)
+    p = sub.add_parser("intend", help="record an intention: WHEN trigger, DO action")
+    p.add_argument("--when", dest="trigger", required=True)
+    p.add_argument("--do", dest="action", required=True)
+    p = sub.add_parser("brief", help="session-start brief: warnings, triggered intentions, facts, recent activity")
+    p.add_argument("context", nargs="?", default="")
+    p.add_argument("--limit", type=int, default=10)
     sub.add_parser("status", help="store status")
     sub.add_parser("serve", help="run the MCP stdio server")
 
@@ -633,6 +883,12 @@ def main(argv=None):
             out = forget(store, args.text, args.file)
         elif args.cmd == "recent":
             out = recent(store, args.limit)
+        elif args.cmd == "learn":
+            out = learn_lesson(store, args.situation, args.rule, args.went_wrong)
+        elif args.cmd == "intend":
+            out = add_intention(store, args.trigger, args.action)
+        elif args.cmd == "brief":
+            out = brief(store, args.context, args.limit)["brief"]
         elif args.cmd == "status":
             out = status(store)
         elif args.cmd == "serve":
