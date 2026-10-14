@@ -406,6 +406,64 @@ class FieldReport032Tests(unittest.TestCase):
         self.assertIn(9, [o.get("id") for o in lines])
 
 
+class SurrogateStrayFileTests(unittest.TestCase):
+    """v0.3.3: the stray 0-byte file, finally reproduced — a topic with a
+    lone surrogate made write_text create topics/t-t.md and THEN fail
+    encoding the heading, leaving a 0-byte file that status listed."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Path(self.tmp.name) / "s"
+        am.init_store(self.store)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _zero_byte_files(self):
+        return [p for p in self.store.rglob("*.md") if p.stat().st_size == 0]
+
+    def test_surrogate_topic_fails_cleanly_no_stray_file(self):
+        with self.assertRaises(ValueError):
+            am.save_fact(self.store, "text", "t\ud800t")
+        self.assertFalse((self.store / "topics" / "t-t.md").exists())
+        self.assertEqual(self._zero_byte_files(), [])
+        files = [f["file"] for f in am.status(self.store)["files"]]
+        self.assertNotIn("topics/t-t.md", files)
+
+    def test_surrogate_text_rejected_without_side_effects(self):
+        before = len(am._bullets(self.store, "MEMORY.md"))
+        with self.assertRaises(ValueError):
+            am.save_fact(self.store, "bad \ud800 text")
+        self.assertEqual(len(am._bullets(self.store, "MEMORY.md")), before)
+        with self.assertRaises(ValueError):
+            am.log_entry(self.store, "bad \ud800 log")
+        with self.assertRaises(ValueError):
+            am.learn_lesson(self.store, situation="s \ud800", rule="r")
+        with self.assertRaises(ValueError):
+            am.add_intention(self.store, "t \ud800", "act")
+        self.assertEqual(am._bullets(self.store, "LESSONS.md"), [])
+        self.assertEqual(am._bullets(self.store, "INTENTIONS.md"), [])
+        self.assertEqual(self._zero_byte_files(), [])
+
+    def test_preexisting_topic_file_survives_a_rejected_save(self):
+        am.save_fact(self.store, "original fact", topic="keepme")
+        target = self.store / "topics" / "keepme.md"
+        before = target.read_text(encoding="utf-8")
+        # A rejected save aimed at a different (surrogate) topic must not
+        # touch the existing file — and neither must one aimed at it with
+        # bad text.
+        with self.assertRaises(ValueError):
+            am.save_fact(self.store, "bad \ud800", topic="keepme")
+        self.assertEqual(target.read_text(encoding="utf-8"), before)
+
+    def test_legit_unicode_still_saves_everywhere(self):
+        out = am.save_fact(self.store, "le café ☕ est prêt", topic="日本語トピック")
+        self.assertTrue((self.store / out["saved_to"]).is_file())
+        am.learn_lesson(self.store, situation="café fermé", rule="vérifier avant")
+        hits = am.search(self.store, "café")
+        self.assertTrue(hits)
+
+
 class ServerKillerRegressionTests(unittest.TestCase):
     """v0.2.2 regressions: the two remaining ways to kill the server."""
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.3 — 2026-10-14
+
+**The stray 0-byte file — reproduced and fixed.** The 0.3.2 entry marked
+it not-reproduced; the field re-check found the exact trigger:
+`save_fact(store, "text", "t\ud800t")` — a *topic* containing a lone
+surrogate. The topic-heading `write_text` created `topics/t-t.md` first
+and failed encoding second, leaving a 0-byte file that `memory_status`
+then listed as a memory file. (The 0.3.2 probes had aimed at the text
+and at filesystem paths, never at the heading write — repro matters.)
+
+Fix, two layers:
+- Every write operation (save, log, learn, intend) now validates that
+  its text can be encoded as UTF-8 **before touching the filesystem**
+  and rejects lone surrogates with a clean `ValueError` — over MCP the
+  caller gets a readable tool error, not a raw `UnicodeEncodeError`.
+- File creation for topic/log headings now encodes first and writes
+  bytes, so a failure can never again leave a created-but-empty file.
+- Nothing is ever deleted by the fix path: pre-existing topic files are
+  untouched by rejected saves (regression-tested), and legitimate
+  non-ASCII content (café, CJK topics, emoji) saves exactly as before.
+- Test suite: 52 → 56, including the field repro verbatim.
+
 ## 0.3.2 — 2026-10-14
 
 From the 0.3.1 confirmation session — the suggested stemmer fix,

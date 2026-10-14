@@ -38,7 +38,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 
 # Legitimate MCP messages nest maybe a dozen levels. Anything past this
 # is hostile or broken, and deep nesting is exactly what makes the JSON
@@ -225,21 +225,42 @@ def get_file(store: Path, rel: str, from_line: int = 1, lines: int = 200) -> dic
     }
 
 
+def _require_encodable(text: str, field: str) -> str:
+    """Reject text that cannot be stored as UTF-8 (lone surrogates from
+    JSON \\uXXXX escapes are the usual source) BEFORE any file is
+    touched. Without this, write_text creates the file and *then* fails
+    encoding the heading — leaving a stray 0-byte file that status goes
+    on to list as if it were a real memory file."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError(
+            f"{field} contains characters that cannot be stored as UTF-8 "
+            "(e.g. lone surrogates)") from None
+    return text
+
+
 def save_fact(store: Path, text: str, topic: str = None) -> dict:
-    init_store(store)
     text = " ".join(text.split())
     if not text:
         raise ValueError("nothing to save")
-    bullet = f"- [{_today()}] {text}"
+    _require_encodable(text, "text")
+    heading = None
     if topic:
         # The heading is written raw into the file, so it gets the same
         # single-line normalization as the text — otherwise a newline in
         # the topic could inject fabricated, dated "facts" as file lines.
         heading = " ".join(str(topic).split()) or "Notes"
+        _require_encodable(heading, "topic")
+    init_store(store)
+    bullet = f"- [{_today()}] {text}"
+    if topic:
         rel = f"topics/{_slugify(heading)}.md"
         target = _safe_path(store, rel)
         if not target.exists():
-            target.write_text(f"# {heading}\n\n", encoding="utf-8")
+            # Encode first, then write bytes: a failure can never leave
+            # a created-but-empty file behind.
+            target.write_bytes(f"# {heading}\n\n".encode("utf-8"))
         with target.open("a", encoding="utf-8") as fh:
             fh.write(bullet + "\n")
         return {"saved_to": rel, "entry": bullet}
@@ -250,15 +271,16 @@ def save_fact(store: Path, text: str, topic: str = None) -> dict:
 
 
 def log_entry(store: Path, text: str) -> dict:
-    init_store(store)
     text = " ".join(text.split())
     if not text:
         raise ValueError("nothing to log")
+    _require_encodable(text, "text")
+    init_store(store)
     rel = f"logs/{_today()}.md"
     target = _safe_path(store, rel)
     entry = f"- {_now_time()} — {text}"
     if not target.exists():
-        target.write_text(f"# {_today()}\n\n", encoding="utf-8")
+        target.write_bytes(f"# {_today()}\n\n".encode("utf-8"))
     with target.open("a", encoding="utf-8") as fh:
         fh.write(entry + "\n")
     return {"logged_to": rel, "entry": entry}
@@ -331,12 +353,15 @@ def learn_lesson(store: Path, situation: str, rule: str, went_wrong: str = "") -
     Lessons are the store's scar tissue — they outrank facts in search
     and lead every brief, so the next agent (any agent) hits the warning
     before repeating the mistake instead of after."""
-    init_store(store)
     situation = _one_line(situation)
     rule = _one_line(rule)
     went_wrong = _one_line(went_wrong) if went_wrong else ""
     if not situation or not rule:
         raise ValueError("a lesson needs at least a situation and a rule")
+    _require_encodable(situation, "situation")
+    _require_encodable(rule, "rule")
+    _require_encodable(went_wrong, "went_wrong")
+    init_store(store)
     body = f"situation: {situation}"
     if went_wrong:
         body += f" | went wrong: {went_wrong}"
@@ -353,11 +378,13 @@ def add_intention(store: Path, trigger: str, action: str) -> dict:
 
     Intentions are retrieved by situation, not by search: memory_brief
     surfaces the ones whose trigger matches the session's context."""
-    init_store(store)
     trigger = _one_line(trigger)
     action = _one_line(action)
     if not trigger or not action:
         raise ValueError("an intention needs both a trigger and an action")
+    _require_encodable(trigger, "trigger")
+    _require_encodable(action, "action")
+    init_store(store)
     entry = f"- [{_today()}] WHEN {trigger} → DO {action}"
     target = _safe_path(store, "INTENTIONS.md")
     with target.open("a", encoding="utf-8") as fh:
