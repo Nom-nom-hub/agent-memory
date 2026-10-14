@@ -506,9 +506,52 @@ class CjkSearchTests(unittest.TestCase):
         self.assertIn("world", toks)
         self.assertIn("東京", toks)      # bigram
         self.assertIn("東", toks)        # unigram
-        # Accented Latin splits at the accent (pre-existing behavior,
-        # pinned so it is a known property rather than an accident).
-        self.assertEqual(am._tokens_of("café"), ["caf"])
+        self.assertEqual(am._tokens_of("café"), ["cafe"])  # accent-folded
+
+
+class UnicodeSearchTests(unittest.TestCase):
+    """v0.3.5: consequences, not token pins. The 0.3.4 suite pinned
+    _tokens_of('café') == ['caf'] and stayed green while the shipped
+    claim about accent behavior ran exactly backwards (an unaccented
+    query MISSED accented text) and whole scripts returned 0 hits."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Path(self.tmp.name) / "s"
+        am.init_store(self.store)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_unaccented_query_matches_accented_text_and_vice_versa(self):
+        am.save_fact(self.store, "le café est prêt le matin")
+        self.assertTrue(am.search(self.store, "cafe"))
+        self.assertTrue(am.search(self.store, "café"))
+        self.assertTrue(am.search(self.store, "CAFÉ"))
+
+    def test_cyrillic_greek_hebrew_arabic_searchable(self):
+        am.save_fact(self.store, "привет из москвы")
+        am.save_fact(self.store, "καλημέρα κόσμε")
+        am.save_fact(self.store, "שלום עולם")
+        am.save_fact(self.store, "مرحبا بالعالم")
+        self.assertTrue(am.search(self.store, "привет"))
+        self.assertTrue(am.search(self.store, "καλημέρα"))
+        self.assertTrue(am.search(self.store, "שלום"))
+        self.assertTrue(am.search(self.store, "مرحبا"))
+
+    def test_hangul_survives_the_fold(self):
+        # Bare NFKD decomposes Hangul into Jamo; without the NFC
+        # recompose, Korean goes unsearchable again — silently.
+        am.save_fact(self.store, "한국어는 아름다운 언어입니다")
+        self.assertTrue(am.search(self.store, "한국"))
+        self.assertTrue(am.search(self.store, "한국어"))
+        self.assertIn("한국", am._tokens_of("한국어"))
+
+    def test_kana_and_han_still_work_after_fold(self):
+        am.save_fact(self.store, "東京は日本の首都です")
+        self.assertTrue(am.search(self.store, "首都"))
+        am.save_fact(self.store, "ひらがなのテキスト")
+        self.assertTrue(am.search(self.store, "ひらがな"))
 
 
 class ServerKillerRegressionTests(unittest.TestCase):

@@ -98,7 +98,7 @@ Agent Memory also stores **behavior**: what the agent has learned to *do*.
 
 | Tool | What it does |
 |---|---|
-| `memory_search` | Ranked keyword search over all memory files, with file + line citations; lessons boosted, every hit tagged by kind (fact / lesson / intention / log / topic). CJK text (Han / kana / Hangul) is indexed by character bigrams, so non-Latin memories are searchable too |
+| `memory_search` | Ranked keyword search over all memory files, with file + line citations; lessons boosted, every hit tagged by kind (fact / lesson / intention / log / topic). Matching is accent-folded (`cafe` finds `café`) and script-aware: Unicode scripts (Cyrillic, Greek, Hebrew, Arabic, Thai…) search as words; CJK (Han / kana / Hangul) indexes by character bigrams |
 | `memory_get` | Read a memory file (or a line window of it) |
 | `memory_save` | Save a durable fact to `MEMORY.md`, or to `topics/<topic>.md` |
 | `memory_log` | Append a timestamped entry to today's daily log |

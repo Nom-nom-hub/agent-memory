@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.5 — 2026-10-14
+
+**A false claim in 0.3.4, corrected — and the capability gap behind it
+closed.** The closing check measured what 0.3.4 only asserted:
+
+- The accent claim ran **backwards**. 0.3.4 said accented text remained
+  reachable; measured: searching `cafe` MISSED a stored `café` fact
+  (the text tokenized to `caf`, the unaccented query did not), while
+  `café` matched. The release-note gloss "queries without the accent
+  still match" was wrong, and the test suite stayed green over it
+  because it pinned the *token* (`['caf']`) instead of the *consequence*
+  (does the query find the fact?).
+- README overstated the fix: "non-Latin memories are searchable" was
+  true only of CJK — Cyrillic, Greek, Hebrew, Arabic and Thai all
+  returned 0 hits.
+
+The fix (the field check's verified approach, re-derived independently):
+- Matching now runs over **accent-folded** text: NFKD, combining marks
+  dropped, **NFC recompose** (load-bearing — bare NFKD decomposes
+  Hangul syllables into Jamo and silently unmakes Korean search), then
+  lowercase. `cafe` ↔ `café` match in both directions.
+- Word tokens are **Unicode word runs**, so Cyrillic, Greek, Hebrew,
+  Arabic, Thai and other scripts are searchable as words; CJK runs
+  keep the unigram+bigram treatment from 0.3.4.
+- The token pin is replaced with consequence tests: unaccented↔accented
+  search both ways, four non-CJK scripts searchable, Hangul intact
+  after the fold, kana/Han unchanged.
+- Test suite: 61 → 65.
+
 ## 0.3.4 — 2026-10-14
 
 **CJK search.** The completion check's one remaining limitation,

@@ -35,10 +35,11 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 
 # Legitimate MCP messages nest maybe a dozen levels. Anything past this
 # is hostile or broken, and deep nesting is exactly what makes the JSON
@@ -153,31 +154,51 @@ def _now_time() -> str:
 
 # ------------------------------------------------------------ operations ----
 
-_TOKEN_RUN = re.compile(
-    r"[a-z0-9']+|[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+")
+_CJK_RUN = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+")
+_WORD_RUN = re.compile(r"[^\W_]+(?:'[^\W_]+)*", re.UNICODE)
 
 
 def _is_cjk(run: str) -> bool:
     return bool(run) and ord(run[0]) >= 0x3040
 
 
+def _fold(text) -> str:
+    """Case- and accent-fold text for matching: NFKD, drop combining
+    marks, then NFC-recompose and lowercase.
+
+    The recompose step is load-bearing: bare NFKD decomposes Hangul
+    syllables into Jamo, which silently makes Korean unsearchable all
+    over again. With folding, 'cafe' and 'café' produce the same token
+    — in 0.3.4 the claim ran the wrong way (an unaccented query MISSED
+    accented text, because the text tokenized to 'caf')."""
+    decomposed = unicodedata.normalize("NFKD", str(text))
+    stripped = "".join(ch for ch in decomposed
+                       if unicodedata.category(ch) != "Mn")
+    return unicodedata.normalize("NFC", stripped).lower()
+
+
 def _tokens_of(text) -> list:
-    """Tokenize for matching: Latin-script words whole; CJK runs as
-    character unigrams + bigrams — the standard indexing for scripts
-    without word boundaries. The old [a-z0-9'] tokenizer produced ZERO
-    tokens for a CJK-only query, so Japanese/Chinese/Korean memories
-    were stored and readable but silently unsearchable."""
+    """Tokenize for matching, over folded text. Unicode word runs
+    ([^\\W_]+) cover Latin, Cyrillic, Greek, Hebrew, Arabic, Thai and
+    every other script with word characters; CJK runs (Han, kana,
+    Hangul) additionally index as character unigrams + bigrams — the
+    standard indexing for scripts without word boundaries. The old
+    [a-z0-9'] tokenizer produced ZERO tokens for non-Latin queries, so
+    those memories were stored and readable but silently unsearchable."""
+    folded = _fold(text)
     out = []
-    for m in _TOKEN_RUN.finditer(str(text).lower()):
+    pos = 0
+    for m in _CJK_RUN.finditer(folded):
+        out.extend(_WORD_RUN.findall(folded[pos:m.start()]))
         run = m.group(0)
-        if _is_cjk(run):
-            if len(run) == 1:
-                out.append(run)
-            else:
-                out.extend(run[i] for i in range(len(run)))
-                out.extend(run[i:i + 2] for i in range(len(run) - 1))
-        else:
+        if len(run) == 1:
             out.append(run)
+        else:
+            out.extend(run[i] for i in range(len(run)))
+            out.extend(run[i:i + 2] for i in range(len(run) - 1))
+        pos = m.end()
+    out.extend(_WORD_RUN.findall(folded[pos:]))
     return out
 
 
