@@ -29,7 +29,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
+
+# Legitimate MCP messages nest maybe a dozen levels. Anything past this
+# is hostile or broken, and deep nesting is exactly what makes the JSON
+# parser recurse toward the C stack limit (platform-dependent).
+MAX_JSON_DEPTH = 100
 PROTOCOL_VERSION = "2024-11-05"
 
 MEMORY_TEMPLATE = """# MEMORY.md
@@ -480,26 +485,74 @@ def handle_message(store: Path, msg):
 def _force_utf8_stdio():
     """The MCP transport is UTF-8 — always. Without this, Windows decodes
     stdin with the locale codepage (e.g. cp1252) and non-ASCII memory text
-    is silently double-encoded on its way into the store."""
+    is silently double-encoded on its way into the store. errors="replace"
+    matters just as much: one invalid byte must degrade to U+FFFD in that
+    one message, never raise out of the read loop and kill the server."""
     for stream in (sys.stdin, sys.stdout):
         try:
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
+
+
+def _iter_input_lines():
+    """Yield input lines as text, decoding bytes ourselves.
+
+    Reading the binary buffer and decoding per line with errors="replace"
+    means an invalid UTF-8 byte can never raise during iteration — the
+    failure mode that replaced the cp1252 bug in v0.2.1 (a strict UTF-8
+    text wrapper reads ahead in chunks, so one bad byte killed even the
+    well-formed messages buffered behind it).
+    """
+    buffer = getattr(sys.stdin, "buffer", None)
+    if buffer is not None:
+        for raw_bytes in buffer:
+            yield raw_bytes.decode("utf-8", errors="replace")
+    else:
+        _force_utf8_stdio()
+        yield from sys.stdin
+
+
+def _max_json_depth(raw: str) -> int:
+    """Bracket depth of a JSON text, ignoring brackets inside strings."""
+    depth = max_depth = 0
+    in_str = escaped = False
+    for ch in raw:
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "[{":
+            depth += 1
+            if depth > max_depth:
+                max_depth = depth
+        elif ch in "]}":
+            depth -= 1
+    return max_depth
 
 
 def serve(store: Path):
     _force_utf8_stdio()
     init_store(store)
     print(f"agent-memory {VERSION} serving store {store}", file=sys.stderr)
-    for raw in sys.stdin:
-        raw = raw.strip()
+    for raw in _iter_input_lines():
+        raw = raw.strip().lstrip("﻿").strip()  # tolerate a stray BOM
         if not raw:
+            continue
+        if _max_json_depth(raw) > MAX_JSON_DEPTH:
+            print("agent-memory: skipped absurdly nested JSON message",
+                  file=sys.stderr)
             continue
         try:
             msg = json.loads(raw)
-        except json.JSONDecodeError:
-            print("agent-memory: skipped non-JSON line", file=sys.stderr)
+        except (json.JSONDecodeError, RecursionError):
+            print("agent-memory: skipped unparseable line", file=sys.stderr)
             continue
         try:
             if isinstance(msg, list):
@@ -520,8 +573,14 @@ def serve(store: Path):
                 continue
             resp = _rpc_error(req_id, -32603, f"internal error: {exc}")
         if resp is not None:
-            sys.stdout.write(json.dumps(resp) + "\n")
-            sys.stdout.flush()
+            try:
+                sys.stdout.write(json.dumps(resp) + "\n")
+                sys.stdout.flush()
+            except (BrokenPipeError, RecursionError, ValueError) as exc:
+                print(f"agent-memory: could not send response: {exc}",
+                      file=sys.stderr)
+                if isinstance(exc, BrokenPipeError):
+                    break
 
 
 # ----------------------------------------------------------------- CLI ----

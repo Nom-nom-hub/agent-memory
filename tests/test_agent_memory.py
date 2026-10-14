@@ -285,5 +285,88 @@ class RegressionTests(unittest.TestCase):
         self.assertNotIn("Traceback", proc.stderr)
 
 
+class ServerKillerRegressionTests(unittest.TestCase):
+    """v0.2.2 regressions: the two remaining ways to kill the server."""
+
+    def _run_server(self, payload: bytes, store: Path):
+        return subprocess.run(
+            [sys.executable, str(ROOT / "agent_memory.py"),
+             "--store", str(store), "serve"],
+            input=payload, capture_output=True, timeout=30)
+
+    def _reply_ids(self, proc):
+        ids = set()
+        for line in proc.stdout.decode("utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            for item in (obj if isinstance(obj, list) else [obj]):
+                if isinstance(item, dict) and "id" in item:
+                    ids.add(item["id"])
+        return ids
+
+    def test_deeply_nested_json_does_not_kill_server(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # ~6 KB of nested objects (the reported size) and a much
+            # deeper array nest for good measure.
+            deep_obj = '{"x":' * 1000 + "1" + "}" * 1000
+            deep_arr = "[" * 5000 + "]" * 5000
+            lines = [
+                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
+                deep_obj, deep_arr,
+                '{"jsonrpc":"2.0","id":3,"method":"ping"}',
+            ]
+            proc = self._run_server(("\n".join(lines) + "\n").encode(),
+                                    Path(tmp) / "s")
+            self.assertEqual(proc.returncode, 0,
+                             proc.stderr.decode(errors="replace"))
+            ids = self._reply_ids(proc)
+            self.assertIn(1, ids)
+            self.assertIn(3, ids)  # ping after the nesting bombs answered
+
+    def test_depth_guard_ignores_brackets_in_strings(self):
+        self.assertEqual(am._max_json_depth('{"a": "[[[[{{{{"}'), 1)
+        self.assertEqual(am._max_json_depth('{"a": {"b": [1, {"c": 2}]}}'), 4)
+        self.assertGreater(am._max_json_depth("[" * 150 + "]" * 150), 100)
+
+    def test_moderately_nested_legit_message_still_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            nested = {"level": None}
+            cur = nested
+            for _ in range(40):
+                cur["level"] = {"level": None}
+                cur = cur["level"]
+            msg = {"jsonrpc": "2.0", "id": 7, "method": "initialize",
+                   "params": {"deep": nested}}
+            proc = self._run_server((json.dumps(msg) + "\n").encode(),
+                                    Path(tmp) / "s")
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn(7, self._reply_ids(proc))
+
+    def test_invalid_utf8_byte_does_not_kill_server(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp) / "s"
+            save = json.dumps({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "memory_save",
+                           "arguments": {"text": "bad byte: X end"}},
+            }).encode().replace(b"X", b"\xff")
+            payload = (
+                b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'
+                + b"\xff\xfe\x81 pure junk\n"
+                + save + b"\n"
+                + b'{"jsonrpc":"2.0","id":3,"method":"ping"}\n'
+            )
+            proc = self._run_server(payload, store)
+            self.assertEqual(proc.returncode, 0,
+                             proc.stderr.decode(errors="replace"))
+            ids = self._reply_ids(proc)
+            self.assertIn(1, ids)   # init answered despite junk behind it
+            self.assertIn(3, ids)   # ping after the bad byte answered
+            # The store is still usable by a fresh process afterwards.
+            hits = am.search(store, "bad byte")
+            self.assertTrue(hits)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

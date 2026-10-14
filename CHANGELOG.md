@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.2 — 2026-10-14
+
+The two remaining server-killers, reported right after 0.2.1:
+
+- **Deeply nested JSON.** A ~6 KB message nested thousands of levels
+  could drive the JSON parser into `RecursionError` (the exact threshold
+  is platform/C-stack dependent, which is why it reproduced on Windows
+  but not in the Linux test environment). Messages are now depth-checked
+  *before* parsing — bracket depth ignoring string contents, limit 100,
+  far above any legitimate MCP message — and `RecursionError` is also
+  caught around parsing and response serialization.
+- **Invalid UTF-8 byte.** The 0.2.1 encoding fix traded silent corruption
+  for a crash: a strict UTF-8 text reader decodes ahead in chunks, so one
+  invalid byte raised `UnicodeDecodeError` during iteration and killed
+  the server (taking already-buffered good messages with it). The server
+  now reads the binary buffer and decodes **per line** with
+  `errors="replace"`: a bad byte degrades to U+FFFD inside its own
+  message and can never raise out of the read loop. A stray BOM at the
+  start of a line is also tolerated now.
+- Test suite: 25 → 29 tests, including both killer repros replayed
+  against a live server, plus an adversarial fuzz pass (binary garbage,
+  truncated JSON, 200 KB argument, CRLF) verified manually.
+
 ## 0.2.1 — 2026-10-14
 
 Fixes from the first external field test (issues #1–#3, reported by an agent

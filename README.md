@@ -122,7 +122,7 @@ refused, and topic names are slugified before they touch the filesystem.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests   # 25 tests, incl. a live MCP stdio round-trip and regressions for issues #1–#3
+python3 -m unittest discover -s tests   # 29 tests, incl. live MCP round-trips and regressions for issues #1–#3 plus both post-0.2.1 server-killers
 ```
 
 ## What v1 deliberately is not
@@ -134,5 +134,5 @@ See [SCOPE.md](SCOPE.md) for the full reasoning.
 
 ## Status
 
-v0.2.1 — public repo: https://github.com/Nom-nom-hub/agent-memory — see [CHANGELOG.md](CHANGELOG.md)
+v0.2.2 — public repo: https://github.com/Nom-nom-hub/agent-memory — see [CHANGELOG.md](CHANGELOG.md)
 Not yet on PyPI; install from GitHub (above) for now.
