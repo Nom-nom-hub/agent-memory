@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.4 — 2026-10-14
+
+**CJK search.** The completion check's one remaining limitation,
+pre-existing in every version: the search tokenizer only knew
+`[a-z0-9']`, so a Japanese/Chinese/Korean query produced zero tokens
+and returned `[]` — CJK memories were stored and readable via
+`memory_get`/`memory_brief` but silently unsearchable.
+
+- New shared tokenizer used by search and by brief context matching:
+  Latin-script words stay whole; CJK runs (Han, Hiragana, Katakana,
+  Hangul) index as character unigrams + bigrams — the standard approach
+  for scripts without word boundaries, no segmenter required.
+- Consequences: CJK facts, lessons, and intentions are now searchable
+  and match brief contexts; mixed-script queries ("meeting 東京") work;
+  adjacent-character matches naturally outscore scattered ones.
+- Known remaining property, pinned by test rather than left implicit:
+  accented Latin characters split tokens ("café" indexes as "caf") —
+  unchanged from earlier versions.
+- Test suite: 56 → 61.
+
 ## 0.3.3 — 2026-10-14
 
 **The stray 0-byte file — reproduced and fixed.** The 0.3.2 entry marked
@@ -41,11 +61,13 @@ version (both reproduced, both fixed):
 - **Empty batch silence.** A batch of `[]` previously got no response
   at all; JSON-RPC 2.0 defines it as invalid, so it now gets a single
   `-32600` error response.
-- Also probed, **not reproduced**: a stray 0-byte file from a failed
-  save (empty-text topic save, topic-path-is-a-directory, and
-  log-path-is-a-directory scenarios all fail cleanly with no stray
+- Also probed, **not reproduced** (at the time): a stray 0-byte file
+  from a failed save (empty-text topic save, topic-path-is-a-directory,
+  and log-path-is-a-directory scenarios all fail cleanly with no stray
   files). Left open; if it recurs with a concrete repro it gets a fix
-  and a regression test like everything else.
+  and a regression test like everything else. → **It recurred with a
+  concrete repro and was fixed in 0.3.3** (lone surrogate in the topic
+  heading; the probes had aimed at the wrong input).
 - Test suite: 48 → 52.
 
 ## 0.3.1 — 2026-10-14

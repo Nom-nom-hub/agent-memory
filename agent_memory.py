@@ -38,7 +38,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 
 # Legitimate MCP messages nest maybe a dozen levels. Anything past this
 # is hostile or broken, and deep nesting is exactly what makes the JSON
@@ -153,9 +153,41 @@ def _now_time() -> str:
 
 # ------------------------------------------------------------ operations ----
 
+_TOKEN_RUN = re.compile(
+    r"[a-z0-9']+|[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+")
+
+
+def _is_cjk(run: str) -> bool:
+    return bool(run) and ord(run[0]) >= 0x3040
+
+
+def _tokens_of(text) -> list:
+    """Tokenize for matching: Latin-script words whole; CJK runs as
+    character unigrams + bigrams — the standard indexing for scripts
+    without word boundaries. The old [a-z0-9'] tokenizer produced ZERO
+    tokens for a CJK-only query, so Japanese/Chinese/Korean memories
+    were stored and readable but silently unsearchable."""
+    out = []
+    for m in _TOKEN_RUN.finditer(str(text).lower()):
+        run = m.group(0)
+        if _is_cjk(run):
+            if len(run) == 1:
+                out.append(run)
+            else:
+                out.extend(run[i] for i in range(len(run)))
+                out.extend(run[i:i + 2] for i in range(len(run) - 1))
+        else:
+            out.append(run)
+    return out
+
+
+def _keep_token(tok: str) -> bool:
+    return len(tok) >= 2 or _is_cjk(tok)
+
+
 def search(store: Path, query: str, limit: int = 8) -> list:
     limit = _as_int(limit, 8, 1, 50)
-    all_tokens = [t for t in re.findall(r"[a-z0-9']+", str(query).lower()) if len(t) >= 2]
+    all_tokens = [t for t in _tokens_of(query) if _keep_token(t)]
     tokens = [t for t in all_tokens if t not in STOPWORDS] or all_tokens
     if not tokens:
         return []
@@ -186,7 +218,7 @@ def search(store: Path, query: str, limit: int = 8) -> list:
                 # (and take the lesson boost) on its own vocabulary.
                 continue
             low = line.lower()
-            words = re.findall(r"[a-z0-9']+", low)
+            words = _tokens_of(low)
             hits = sum(words.count(t) for t in tokens)
             if hits == 0:
                 continue
@@ -310,7 +342,7 @@ def _bullets(store: Path, rel: str) -> list:
 
 
 def _content_tokens(text: str) -> list:
-    toks = [t for t in re.findall(r"[a-z0-9']+", str(text).lower()) if len(t) >= 2]
+    toks = [t for t in _tokens_of(text) if _keep_token(t)]
     return [t for t in toks if t not in STOPWORDS] or toks
 
 
@@ -332,7 +364,7 @@ def _stem(tok: str) -> str:
 
 def _overlap(context: str, text: str) -> int:
     ctx = {_stem(t) for t in _content_tokens(context)}
-    words = [_stem(w) for w in re.findall(r"[a-z0-9']+", text.lower())]
+    words = [_stem(w) for w in _tokens_of(text)]
     return sum(words.count(t) for t in ctx)
 
 

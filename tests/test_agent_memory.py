@@ -464,6 +464,53 @@ class SurrogateStrayFileTests(unittest.TestCase):
         self.assertTrue(hits)
 
 
+class CjkSearchTests(unittest.TestCase):
+    """v0.3.4: the completion-check limitation — CJK memories were
+    stored and readable but unsearchable, because the tokenizer only
+    knew [a-z0-9'] and a CJK-only query produced zero tokens."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Path(self.tmp.name) / "s"
+        am.init_store(self.store)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_cjk_fact_is_searchable(self):
+        am.save_fact(self.store, "東京は日本の首都です")
+        self.assertTrue(am.search(self.store, "東京"))
+        self.assertTrue(am.search(self.store, "首都"))
+        self.assertTrue(am.search(self.store, "日本"))
+
+    def test_cjk_query_with_no_match_returns_empty(self):
+        am.save_fact(self.store, "東京は日本の首都です")
+        self.assertEqual(am.search(self.store, "大阪"), [])
+
+    def test_mixed_script_query(self):
+        am.save_fact(self.store, "the meeting in 東京 starts at noon")
+        hits = am.search(self.store, "meeting 東京")
+        self.assertTrue(hits)
+        self.assertIn("東京", hits[0]["text"])
+
+    def test_cjk_lesson_surfaces_in_brief(self):
+        am.learn_lesson(self.store, situation="東京の会議の前に",
+                        rule="資料を先に送る")
+        out = am.brief(self.store, context="東京の会議")
+        self.assertGreaterEqual(out["warnings"], 1)
+        self.assertFalse(out["warnings_fallback"])
+
+    def test_tokenizer_units(self):
+        toks = am._tokens_of("hello 東京 world")
+        self.assertIn("hello", toks)
+        self.assertIn("world", toks)
+        self.assertIn("東京", toks)      # bigram
+        self.assertIn("東", toks)        # unigram
+        # Accented Latin splits at the accent (pre-existing behavior,
+        # pinned so it is a known property rather than an accident).
+        self.assertEqual(am._tokens_of("café"), ["caf"])
+
+
 class ServerKillerRegressionTests(unittest.TestCase):
     """v0.2.2 regressions: the two remaining ways to kill the server."""
 
